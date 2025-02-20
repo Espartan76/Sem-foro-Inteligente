@@ -1,0 +1,525 @@
+// volatile bool flag_write_display = false;
+
+// //////////////////////////////////////////////////////////////
+// //////////////// Confiuração do NeoPixel /////////////////////
+// //////////////////////////////////////////////////////////////
+// // Definição do número de LEDs e pino.
+// #define LED_COUNT 25
+// #define LED_PIN 7
+
+// // Definição de pixel GRB
+// struct pixel_t {
+//   uint8_t G, R, B; // Três valores de 8-bits compõem um pixel.
+// };
+// typedef struct pixel_t pixel_t;
+// typedef pixel_t npLED_t; // Mudança de nome de "struct pixel_t" para "npLED_t" por clareza.
+
+// // Declaração do buffer de pixels que formam a matriz.
+// npLED_t leds[LED_COUNT];
+
+// // Variáveis para uso da máquina PIO.
+// PIO np_pio;
+// uint sm;
+
+// /**
+//  * Inicializa a máquina PIO para controle da matriz de LEDs.
+//  */
+// void npInit(uint pin) {
+
+//   // Cria programa PIO.
+//   uint offset = pio_add_program(pio0, &ws2818b_program);
+//   np_pio = pio0;
+
+//   // Toma posse de uma máquina PIO.
+//   sm = pio_claim_unused_sm(np_pio, false);
+//   if (sm < 0) {
+//     np_pio = pio1;
+//     sm = pio_claim_unused_sm(np_pio, true); // Se nenhuma máquina estiver livre, panic!
+//   }
+
+//   // Inicia programa na máquina PIO obtida.
+//   ws2818b_program_init(np_pio, sm, offset, pin, 800000.f);
+
+//   // Limpa buffer de pixels.
+//   for (uint i = 0; i < LED_COUNT; ++i) {
+//     leds[i].R = 0;
+//     leds[i].G = 0;
+//     leds[i].B = 0;
+//   }
+// }
+
+// /**
+//  * Atribui uma cor RGB a um LED.
+//  */
+// void npSetLED(const uint index, const uint8_t r, const uint8_t g, const uint8_t b) {
+//   leds[index].R = r;
+//   leds[index].G = g;
+//   leds[index].B = b;
+// }
+
+// /**
+//  * Limpa o buffer de pixels.
+//  */
+// void npClear() {   
+    
+//   for (uint i = 0; i < LED_COUNT; ++i)
+//     npSetLED(i, 0, 0, 0);
+// }
+
+// /**
+//  * Escreve os dados do buffer nos LEDs.
+//  */
+// void npWrite() {
+//   // Escreve cada dado de 8-bits dos pixels em sequência no buffer da máquina PIO.
+//   for (uint i = 0; i < LED_COUNT; ++i) {
+//     pio_sm_put_blocking(np_pio, sm, leds[i].G);
+//     pio_sm_put_blocking(np_pio, sm, leds[i].R);
+//     pio_sm_put_blocking(np_pio, sm, leds[i].B);
+//   }
+//   sleep_us(100); // Espera 100us, sinal de RESET do datasheet.
+// }
+
+
+//Função para medir distância
+uint64_t get_pulse_duration() {
+    // Envia um pulso de 10 microssegundos no pino TRIG
+    gpio_put(TRIG_PIN, 1);
+    sleep_us(10);
+    gpio_put(TRIG_PIN, 0);
+
+    // Espera o pino ECHO ficar alto
+    while (gpio_get(ECHO_PIN) == 0);
+
+    // Marca o tempo inicial
+    absolute_time_t start_time = get_absolute_time();
+
+    // Espera o pino ECHO ficar baixo
+    while (gpio_get(ECHO_PIN) == 1);
+
+    // Marca o tempo final
+    absolute_time_t end_time = get_absolute_time();
+
+    // Calcula a duração do pulso em microssegundos
+    return absolute_time_diff_us(start_time, end_time);
+}
+
+void medir_speed() {
+    static int count = 0;
+    static float speed = 0;
+    static float distance_in = 0;
+    count++;
+
+    // Mede a distância
+    uint64_t duration = get_pulse_duration();
+    // Calcula a distância em centímetros
+    // A velocidade do som é aproximadamente 343 m/s ou 0.0343 cm/us
+    // Como o som vai e volta, dividimos por 2
+    //Test distance = (high level time×velocity of sound (340 m/s) / 2        
+    float distance = (duration * 0.0343)/2;
+
+    if(count == 1){
+        distance_in = distance;
+    }else if(count == 2){
+        count = 0;
+    }
+    
+    sleep_ms(1000);
+
+    // Calcula a velocidade em m/s
+    speed =(distance_in - distance) * 0.01/2;     
+
+    // // Exibe a distância no LCD
+    // lcd_set_cursor(0, 0);
+    // lcd_write_string("distance: ");
+    // lcd_set_cursor(0, 10);
+    // char buffer_distance[16];
+    // snprintf(buffer_distance, sizeof(buffer_distance), "%.2f m", distance);
+    // lcd_write_string(buffer_distance);
+
+    // Exibe a velocidade no LCD
+    lcd_set_cursor(1, 6);
+    lcd_write_string("vel: ");
+    lcd_set_cursor(1, 8);
+    char buffer_speed[16];
+    snprintf(buffer_speed, sizeof(buffer_speed), "%.2f", speed );
+    lcd_write_string(buffer_speed);    
+
+    // Exibe a distância no console
+    printf("speed: %.4f cm/s\n", speed*100 );
+    printf("distance: %.4f cm\n", distance);
+    printf("distance_in: %.4f cm\n", distance_in);
+    printf("count: %d\n", count);
+                     
+}
+
+
+    // GPIOs do sensor HC-SR04
+    gpio_init(TRIG_PIN);
+    gpio_init(ECHO_PIN);
+    gpio_set_dir(TRIG_PIN, GPIO_OUT);
+    gpio_set_dir(ECHO_PIN, GPIO_IN);
+    
+
+
+// /////////////////////////////////////////////////////
+// //////////////// Configuração do LCD ////////////////
+// /////////////////////////////////////////////////////
+// // Definições do módulo I2C
+// #define I2C_PORT i2c0
+// #define I2C_SDA 16
+// #define I2C_SCL 17
+// #define I2C_BAUDRATE 100000 // 100 kHz é mais comum para LCDs
+
+// // Endereço I2C do módulo LCD (datasheet do módulo)
+// #define LCD_ADDR 0x27
+
+// // Função para inicializar o I2C
+// void i2c_init_lcd() {
+//     i2c_init(I2C_PORT, I2C_BAUDRATE);
+//     gpio_set_function(I2C_SDA, GPIO_FUNC_I2C);
+//     gpio_set_function(I2C_SCL, GPIO_FUNC_I2C);
+//     gpio_pull_up(I2C_SDA);
+//     gpio_pull_up(I2C_SCL);
+// }
+
+// // Função para enviar dados via I2C
+// int i2c_write_byte(uint8_t reg, uint8_t data) {
+//     uint8_t buf[2];
+//     buf[0] = reg;
+//     buf[1] = data;
+//     int ret = i2c_write_blocking(I2C_PORT, LCD_ADDR, buf, 2, false);
+//     if (ret < 0) {
+//         printf("Erro I2C: %d\n", ret);
+//     }
+//     return ret;
+// }
+
+// // Função para enviar comandos ao LCD
+// void lcd_send_command(uint8_t cmd) {
+//     uint8_t data_upper = (cmd & 0xF0) | 0x08; // Backlight ON, RS=0, RW=0
+//     uint8_t data_lower = ((cmd << 4) & 0xF0) | 0x08;
+
+//     i2c_write_byte(0x00, data_upper);
+//     sleep_us(1000);
+//     i2c_write_byte(0x00, data_upper | 0x04); // Enable pulse
+//     sleep_us(1000);
+//     i2c_write_byte(0x00, data_upper);
+
+//     i2c_write_byte(0x00, data_lower);
+//     sleep_us(1000);
+//     i2c_write_byte(0x00, data_lower | 0x04); // Enable pulse
+//     sleep_us(1000);
+//     i2c_write_byte(0x00, data_lower);
+// }
+
+// // Função para enviar caracteres ao LCD
+// void lcd_send_data(uint8_t data) {
+//     uint8_t data_upper = (data & 0xF0) | 0x09; // Backlight ON, RS=1, RW=0
+//     uint8_t data_lower = ((data << 4) & 0xF0) | 0x09;
+
+//     i2c_write_byte(0x00, data_upper);
+//     sleep_us(1000);
+//     i2c_write_byte(0x00, data_upper | 0x04); // Enable pulse
+//     sleep_us(1000);
+//     i2c_write_byte(0x00, data_upper);
+
+//     i2c_write_byte(0x00, data_lower);
+//     sleep_us(1000);
+//     i2c_write_byte(0x00, data_lower | 0x04); // Enable pulse
+//     sleep_us(1000);
+//     i2c_write_byte(0x00, data_lower);
+// }
+
+// // Função para inicializar o LCD
+// void lcd_init() {
+//     sleep_ms(100); // Aguarda o LCD inicializar
+
+//     lcd_send_command(0x33); // Inicialização
+//     lcd_send_command(0x32); // Modo de 4 bits
+//     lcd_send_command(0x28); // 2 linhas, fonte 5x8
+//     lcd_send_command(0x0C); // Display ON, Cursor OFF, Blink OFF
+//     lcd_send_command(0x06); // Incrementa cursor
+//     lcd_send_command(0x01); // Limpa o display
+// }
+
+// // Função para limpar o display
+// void lcd_clear() {
+//     lcd_send_command(0x01);
+//     sleep_ms(2);
+// }
+
+// // Função para posicionar o cursor
+// void lcd_set_cursor(uint8_t row, uint8_t col) {
+//     uint8_t addr = (row == 0) ? 0x00 : 0x40;
+//     addr += col;
+//     lcd_send_command(0x80 | addr);
+// }
+
+// // Função para escrever uma string no LCD
+// void lcd_write_string(const char *str) {
+//     while (*str) {
+//         lcd_send_data(*str++);
+//     }
+// }
+
+
+
+// ////////////////////////////////////////////////////////
+// ///////////Configuração Sensor TCRT5000/////////////////
+// ////////////////////////////////////////////////////////
+
+// #define TCRT5000_PIN 20
+// // Função para inicializar o sensor
+// void tcr5000_init() {
+//     gpio_init(TCRT5000_PIN); // Inicializa o pino GPIO
+//     gpio_set_dir(TCRT5000_PIN, GPIO_IN); // Configura o pino como entrada
+//     gpio_pull_down(TCRT5000_PIN); // Habilita o pull-down
+// }
+
+// // Função para ler o estado do sensor
+// bool tcr5000_read_line() {
+//     // Lê o valor do pino (0 ou 1)
+//     return gpio_get(TCRT5000_PIN);
+// }
+
+
+
+// #define RED_PIN 4
+// #define YELLOW_PIN 9
+// #define GREEN_PIN 8
+
+// //Função para inicializar o semáforo de LEDs
+// void setup_traffic_light_rgb(){
+//     gpio_init(RED_PIN);
+//     gpio_set_dir(RED_PIN, GPIO_OUT);
+
+//     gpio_init(YELLOW_PIN);
+//     gpio_set_dir(YELLOW_PIN, GPIO_OUT);
+
+//     gpio_init(GREEN_PIN);
+//     gpio_set_dir(GREEN_PIN, GPIO_OUT);
+// }
+
+// //Função do semáforo de LEDs
+// bool repeating_timer_callback(struct repeating_timer *t){
+//     static uint count_traffic = 0;
+
+//     count_traffic++;
+//     if(count_traffic <= 5){
+//         gpio_put(RED_PIN, false);
+//         gpio_put(YELLOW_PIN, false);
+//         gpio_put(GREEN_PIN, true);
+//         printf("LED verde aceso\n");
+//     }else if(5 < count_traffic && count_traffic <= 8){
+//         gpio_put(RED_PIN, false);
+//         gpio_put(YELLOW_PIN, true);
+//         gpio_put(GREEN_PIN, false);
+//         printf("LED amarelo aceso\n");
+//     }else if(8 < count_traffic && count_traffic <= 13){
+//         gpio_put(RED_PIN, true);
+//         gpio_put(YELLOW_PIN, false);
+//         gpio_put(GREEN_PIN, false);
+//         printf("LED vermelho aceso\n");        
+//     }
+//     if(count_traffic == 13){
+//         count_traffic = 0;
+//     }
+//     return true;
+// }
+
+
+// ////////////////////////////////////////////////////////
+// ///////////Configuração display OLED////////////////////
+// ////////////////////////////////////////////////////////
+// const uint I2C_SDA_OLED = 14;
+// const uint I2C_SCL_OLED = 15;
+
+// void setup_i2c_oled()
+// {
+//     // Inicialização do i2c
+//     i2c_init(i2c1, ssd1306_i2c_clock * 1000);
+//     gpio_set_function(I2C_SDA_OLED, GPIO_FUNC_I2C);
+//     gpio_set_function(I2C_SCL_OLED, GPIO_FUNC_I2C);
+//     gpio_pull_up(I2C_SDA_OLED);
+//     gpio_pull_up(I2C_SCL_OLED);
+// }
+
+
+// // Preparar área de renderização para o display (ssd1306_width pixels por ssd1306_n_pages páginas)
+// struct render_area frame_area = {
+//     start_column : 0,
+//     end_column : ssd1306_width - 1,
+//     start_page : 0,
+//     end_page : ssd1306_n_pages - 1
+// };
+
+
+// void write_display(){
+
+//     static int j = 0;    
+//     if(flag_write_display){
+//         flag_write_display = false;
+//         j = 0;
+//     }
+//     j++;
+//     medir_speed();   
+    
+//     // Parte do código para exibir a mensagem no display
+//     if(j==1){
+//         // zera o display inteiro
+//         uint8_t ssd[ssd1306_buffer_length];
+//         memset(ssd, 0, ssd1306_buffer_length);
+//         render_on_display(ssd, &frame_area);        
+//         char *text[] = {
+//             " _____________ ",
+//             "|             |",
+//             "|  TRANSITO   |",
+//             "|    LEVE     |",
+//             "|_____________|"
+//         };
+//         int y = 0;
+//         for (uint i = 0; i < count_of(text); i++)
+//         {
+//             ssd1306_draw_string(ssd, 5, y, text[i]);
+//             y += 8;
+//         }
+//         render_on_display(ssd, &frame_area);
+//         // Seta siga em frente
+//         npClear();
+//         npSetLED(22, 0, 255, 0);     
+//         npSetLED(18, 0, 255, 0); 
+//         npSetLED(17, 0, 255, 0); 
+//         npSetLED(16, 0, 255, 0); 
+//         npSetLED(14, 0, 255, 0); 
+//         npSetLED(12, 0, 255, 0); 
+//         npSetLED(10, 0, 255, 0); 
+//         npSetLED(7, 0, 255, 0); 
+//         npSetLED(2, 0, 255, 0);
+//         npWrite(); // Escreve os dados nos LEDs.            
+//     }
+//     else if(j==2){
+//         // zera o display inteiro
+//         uint8_t ssd[ssd1306_buffer_length];
+//         memset(ssd, 0, ssd1306_buffer_length);
+//         render_on_display(ssd, &frame_area);        
+//         char *text[] = {
+//             " _____________ ",
+//             "|             |",
+//             "|  TRANSITO   |",
+//             "|  MODERADO   |",
+//             "|_____________|"
+//         };
+//         int y = 0;
+//         for (uint i = 0; i < count_of(text); i++)
+//         {
+//             ssd1306_draw_string(ssd, 5, y, text[i]);
+//             y += 8;
+//         }
+//         render_on_display(ssd, &frame_area);
+//         //Seta siga à direita
+//         npClear(); 
+//         npSetLED(22, 255, 0, 0);     
+//         npSetLED(18, 255, 0, 0);
+//         npSetLED(10, 255, 0, 0);
+//         npSetLED(11, 255, 0, 0);
+//         npSetLED(12, 255, 0, 0);
+//         npSetLED(13, 255, 0, 0);
+//         npSetLED(14, 255, 0, 0);
+//         npSetLED(8, 255, 0, 0);
+//         npSetLED(2, 255, 0, 0);
+//         npWrite(); // Escreve os dados nos LEDs.                
+//     }
+//     else if(j==3){
+//         // zera o display inteiro
+//         uint8_t ssd[ssd1306_buffer_length];
+//         memset(ssd, 0, ssd1306_buffer_length);
+//         render_on_display(ssd, &frame_area);        
+//         char *text[] = {
+//             " _____________ ",
+//             "|             |",
+//             "|  TRANSITO   |",
+//             "|   PESADO    |",
+//             "|_____________|"
+//         };
+//         int y = 0;
+//         for (uint i = 0; i < count_of(text); i++)
+//         {
+//             ssd1306_draw_string(ssd, 5, y, text[i]);
+//             y += 8;
+//         }
+//         render_on_display(ssd, &frame_area);
+//         // Seta siga à esquerda
+//         npClear();
+//         npSetLED(22, 255, 0, 0);     
+//         npSetLED(16, 255, 0, 0);
+//         npSetLED(10, 255, 0, 0);
+//         npSetLED(11, 255, 0, 0);
+//         npSetLED(12, 255, 0, 0);
+//         npSetLED(13, 255, 0, 0);
+//         npSetLED(14, 255, 0, 0);
+//         npSetLED(6, 255, 0, 0);
+//         npSetLED(2, 255, 0, 0);
+//         npWrite(); // Escreve os dados nos LEDs.        
+//         j=0;        
+//     }
+//     sleep_ms(1000);
+// }
+
+
+// // Função para o display oled
+// void traffic_light(){
+//     // zera o display inteiro OLED
+//     uint8_t ssd[ssd1306_buffer_length];
+//     memset(ssd, 0, ssd1306_buffer_length);
+//     render_on_display(ssd, &frame_area);        
+//     char *text[] = {
+//         " _____________ ",
+//         "|             |",
+//         "|  SEMAFORO   |",
+//         "|  DESLIGADO  |",
+//         "|_____________|"
+//     };
+//     // Exibe a mensagem no display OLED
+//     int y = 0;
+//     for (uint i = 0; i < count_of(text); i++)
+//     {
+//         ssd1306_draw_string(ssd, 5, y, text[i]);
+//         y += 8;
+//     }
+//     render_on_display(ssd, &frame_area);
+    
+//     // zera o display inteiro LCD e exibe a mensagem
+//     lcd_clear();
+//     lcd_set_cursor(0, 4);
+//     lcd_write_string("SEMAFORO");
+
+//     lcd_set_cursor(1, 3);
+//     lcd_write_string("DESLIGADO");
+
+// }
+
+void traffic_off() {
+    // Semaforo amarelo piscando
+    npClear(); // Limpa os LEDs antes de começar
+
+    for (int k = 0; k < 25; k++) {
+        npSetLED(k, 255, 255, 0); // Configura o LED k para amarelo
+    }
+    npWrite(); // Escreve os dados nos LEDs
+    sleep_ms(500); // Espera 500ms
+
+    npClear(); // Limpa os LEDs
+    npWrite(); // Escreve os dados nos LEDs
+    sleep_ms(500); // Espera 500ms
+}
+
+// // Função para inicializar os gpios dos leds
+// void setup_gpios(){
+//     gpio_init(LED_GREEN);
+//     gpio_set_dir(LED_GREEN, GPIO_OUT);
+//     gpio_put(LED_GREEN, 0);
+
+//     gpio_init(LED_RED);
+//     gpio_set_dir(LED_RED, GPIO_OUT);
+//     gpio_put(LED_RED, 1);
+// }
